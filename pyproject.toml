@@ -1,0 +1,16 @@
+[project]
+name = "limp"
+version = "0.1.0"
+description = "A Python library to simplify mixed integer linear programming (MIP / MILP)"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=2.3.0",
+    "scipy>=1.15.3",
+]
+
+[dependency-groups]
+dev = [
+    "jupyterlab>=4.4.3",
+    "pandas>=2.3.0",
+]
