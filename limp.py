@@ -227,6 +227,12 @@ class Problem:
         # Assign every unique variable an integer index:
         vs = {}
         objective = as_expr(objective)
+        if objective.const != 0:
+            # Because the objective is just a dot product, we have to introduce a dummy variable
+            # if we want to add/subtract a constant amount.
+            # This doesn't change the solution, but it does make the reported loss match the user's expectation
+            objective = objective + self.eqvar('_intercept', as_expr(objective.const)) - objective.const
+            assert objective.const == 0
         for v in objective.terms.keys():
             vs.setdefault(v, len(vs))
         for lb, x, ub in self.constraints:
@@ -329,42 +335,76 @@ class Problem:
     def _check_finite(self, nums: list):
         if not np.all(np.isfinite(np.asarray(nums))):
             raise ValueError('Cannot use unbounded variables here')
-    def min(self, vs: list[Var]) -> Var:
-        'Create a new variable that is the minimum of the listed vars, which must all have finite bounds.'
-        name = 'min('+','.join(v.name for v in vs)+')'
-        min_lower = min(v.lower for v in vs)
-        min_upper = min(v.upper for v in vs)
-        self._check_finite([v.lower for v in vs] + [v.upper for v in vs])
-        if all(v.is_int for v in vs):
-            minval = self.intvar(name, min_lower, min_upper)
-        else:
-            minval = self.contvar(name, min_lower, min_upper)
+    def min(self, vs: list[ExprLike]) -> Var:
+        '''
+        Create a new variable that is the minimum of the listed expressions or variables, which must all have finite bounds.
+        Also useful for constructing a concave function from line segments.
+        '''
+        vs = [as_expr(v) for v in vs]
+        name = f'min_{len(self.constraints)}' # big expressions / lists are just too long, so opaque name
+        lowers = [v.lower for v in vs]
+        uppers = [v.upper for v in vs]
+        self._check_finite(lowers + uppers)
+        min_lower = min(lowers)
+        min_upper = min(uppers)
+        # Even if all the inputs are integers, this will be constrained to be exactly the lowest, so will still be integer
+        minval = self.contvar(name, min_lower, min_upper)
         # decision variables to see if v is the smallest
-        ds = [self.binvar(f'is_min({v.name})') for v in vs]
+        ds = [self.binvar(f'is_{name}_{i}') for i, v in enumerate(vs)]
         self.exactly(1, ds)
         for d, v in zip(ds, vs):
             # If v is minimal, d=1 and v <= minval <= v, that is minval == v
             # Otherwise, we establish a pointless lower bound that is at most min_lower
             self.constraint(v - (v.upper - min_lower)*(1 - d), minval, v)
         return minval
-    def max(self, vs: list[Var]) -> Var:
-        'Create a new variable that is the maximum of the listed vars, which must all have finite bounds.'
-        name = 'max('+','.join(v.name for v in vs)+')'
-        max_lower = max(v.lower for v in vs)
-        max_upper = max(v.upper for v in vs)
-        self._check_finite([v.lower for v in vs] + [v.upper for v in vs])
-        if all(v.is_int for v in vs):
-            maxval = self.intvar(name, max_lower, max_upper)
-        else:
-            maxval = self.contvar(name, max_lower, max_upper)
-        # decision variables to see if v is the biggest
-        ds = [self.binvar(f'is_max({v.name})') for v in vs]
+    def max(self, vs: list[ExprLike]) -> Var:
+        '''
+        Create a new variable that is the maximum of the listed expressions or variables, which must all have finite bounds.
+        Also useful for constructing a convex function from line segments,
+        such as a piecewise approximation of squared error loss or similar.
+        '''
+        vs = [as_expr(v) for v in vs]
+        name = f'max_{len(self.constraints)}' # big expressions / lists are just too long, so opaque name
+        lowers = [v.lower for v in vs]
+        uppers = [v.upper for v in vs]
+        self._check_finite(lowers + uppers)
+        max_lower = max(lowers)
+        max_upper = max(uppers)
+        # Even if all the inputs are integers, this will be constrained to be exactly the lowest, so will still be integer
+        maxval = self.contvar(name, max_lower, max_upper)
+        # decision variables to see if v is the smallest
+        ds = [self.binvar(f'is_{name}_{i}') for i, v in enumerate(vs)]
         self.exactly(1, ds)
         for d, v in zip(ds, vs):
             # If v is maximal, d=1 and v <= maxval <= v, that is maxval == v
             # Otherwise, we establish a pointless upper bound that is at least max_upper
             self.constraint(v, maxval, v + (max_upper - v.lower)*(1 - d))
         return maxval
+    def Huber_loss(self, a: ExprLike, delta: Real, knots: int) -> Var:
+        '''
+        Appoximation to the Huber loss, which is smooth (quadratic) near the origin and linear farther away.
+        If you prefer PyTorch's SmoothL1Loss, just divide by delta.
+
+        a:  the input variable, often a difference of two terms (error)
+        delta:  the distance from the origin at which behavior switches from quadratic to linear
+        knots:  the number of line segments used to approximate the quadratic region (on each side)
+        '''
+        assert delta > 0, "delta must be positive"
+        assert knots >= 1, "Must have at least 1 knot"
+        lines = []
+        xs = np.linspace(0, delta, num=knots+1)
+        for x1, x2 in zip(xs[:-1], xs[1:]):
+            y1 = 0.5 * x1**2
+            y2 = 0.5 * x2**2
+            slope = (y2 - y1) / (x2 - x1)
+            lines.append(  slope*(a - x1) + y1 )
+            lines.append( -slope*(a + x1) + y1 )
+        x1 = delta
+        y1 = 0.5 * x1**2
+        slope = delta
+        lines.append(  slope*(a - x1) + y1 )
+        lines.append( -slope*(a + x1) + y1 )
+        return self.max(lines)
     def prod(self, x: Var, d: Var) -> Var:
         '''
         Create a new variable that is the product of any variable x and a binary variable d.
