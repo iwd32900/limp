@@ -27,7 +27,7 @@ class Var:
     SEMI_CONT = 2
     SEMI_INT = 3
     
-    def __init__(self, name: str, vartype: int, lower: float, upper: float):
+    def __init__(self, name: str, vartype: int, lower: Real, upper: Real):
         self.name = name
         self.vartype = vartype
         # Changing these later can screw up some expressions!
@@ -75,7 +75,7 @@ class Expr:
     In most cases, prefer to create Expr by using normal mathematical operations on Vars,
     or by using methods like sum() from Problem, or as_expr() on a Var or number.
     '''
-    def __init__(self, terms: dict[Var,float] = {}, const: float = 0):
+    def __init__(self, terms: dict[Var,Real] = {}, const: Real = 0):
         self.terms = dict(terms)
         self.const = const
     def __eq__(self, other):
@@ -120,13 +120,16 @@ class Expr:
     def upper(self):
         'Upper bound for this expression.'
         return self.const + sum(max(var.lower*wt, var.upper*wt) for var, wt in self.terms.items())
-    def eval(self, var_to_val: dict[Var, float]) -> float:
+    def eval(self, var_to_val: dict[Var, Real]) -> Real:
         '''
         Evaluate this expression for specific values of the variables involved.
         '''
         return self.const + sum(var_to_val[var]*wt for var, wt in self.terms.items())
 
-def as_expr(x):
+# Types:
+ExprLike = Expr | Var | Real
+
+def as_expr(x: ExprLike) -> Expr:
     '''
     Accepts number or Var as input and returns the equivalent Expr.
     If an Expr is passed in, it is returned unchanged.
@@ -144,10 +147,10 @@ class Problem:
     '''
     def __init__(self):
         self.constraints = []
-    def contvar(self, name: str, lower: float = -np.inf, upper: float = np.inf):
+    def contvar(self, name: str, lower: Real = -np.inf, upper: Real = np.inf) -> Var:
         '''Create a real-valued variable.'''
         return Var(name=name, vartype=Var.CONTINUOUS, lower=lower, upper=upper)
-    def eqvar(self, name: str, x: Expr, lower: float = None, upper: float = None):
+    def eqvar(self, name: str, x: Expr, lower: Real = None, upper: Real = None) -> Var:
         '''
         Create a new variable that is constrained to equal some expression of other variables.
         Only do this if you want to call a function that does not accept Expr directly,
@@ -158,26 +161,26 @@ class Problem:
         v = Var(name=name, vartype=Var.CONTINUOUS, lower=lower, upper=upper)
         self.equal(v, x)
         return v        
-    def intvar(self, name: str, lower: float = -np.inf, upper: float = np.inf):
+    def intvar(self, name: str, lower: Real = -np.inf, upper: Real = np.inf) -> Var:
         '''Create a integer-valued variable.  Best for relatively small bounds.'''
         return Var(name=name, vartype=Var.INTEGER, lower=lower, upper=upper)
-    def binvar(self, name: str):
+    def binvar(self, name: str) -> Var:
         '''
         Create a binary-valued variable (i.e. either 0 or 1).
         These are a workhorse for many problems!
         '''
         return Var(name=name, vartype=Var.INTEGER, lower=0, upper=1)
-    def _var_array(self, name: str, shape: tuple[int], vartype: int, lower: float, upper: float):
+    def _var_array(self, name: str, shape: tuple[int], vartype: int, lower: Real, upper: Real) -> np.ndarray[Var]:
         '''Create a Numpy array of decision variables named after their positional indices.'''
         @np.vectorize
         def make_var(*ix, vartype, lower, upper):
             name_i = '_'.join([name] + [str(i) for i in ix]) # like x_1_2_3
             return Var(name_i, vartype, lower, upper)
         return np.fromfunction(make_var, shape=shape, dtype=int, vartype=vartype, lower=lower, upper=upper)
-    def intvar_array(self, name: str, shape: tuple[int], lower: float = -np.inf, upper: float = np.inf):
+    def intvar_array(self, name: str, shape: tuple[int], lower: Real = -np.inf, upper: Real = np.inf) -> np.ndarray[Var]:
         '''Create a Numpy array of decision variables named after their positional indices.'''
         return self._var_array(name=name, vartype=Var.INTEGER, lower=lower, upper=upper, shape=shape)
-    def binvar_array(self, name: str, shape: tuple[int]):
+    def binvar_array(self, name: str, shape: tuple[int]) -> np.ndarray[Var]:
         '''
         Create a Numpy array of binary decision variables named after their positional indices.
         Many problems end up creating a 2- or 3-D array of binary variables, hence this function.
