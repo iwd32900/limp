@@ -280,6 +280,17 @@ class Problem:
         beyond just satisfying all the constraints.
         '''
         return self.minimize(0, **options)
+    def get_array(self, ans, arr: np.ndarray[Var | Real], as_int: bool = False) -> np.ndarray[Real]:
+        '''
+        Given the return value from minimize() and an array of Vars and/or real numbers,
+        return a similar array with the solution values in it.
+        '''
+        # For each element, return the solution value for that variable,
+        # or default to the value itself if it's constant (i.e. not a variable, not in the solution dict)
+        arr_solve = np.vectorize(lambda x: ans['by_var'].get(x, x))(arr)
+        if as_int:
+            arr_solve = arr_solve.round().astype(int)
+        return arr_solve
     # Helper functions to formulate common ideas.
     # Some of these could be standalone, but others need to be able to create helper variables, constraints, etc
     # So for consistency, they're all implemented here
