@@ -167,16 +167,22 @@ class Problem:
         These are a workhorse for many problems!
         '''
         return Var(name=name, vartype=Var.INTEGER, lower=0, upper=1)
+    def _var_array(self, name: str, shape: tuple[int], vartype: int, lower: float, upper: float):
+        '''Create a Numpy array of decision variables named after their positional indices.'''
+        @np.vectorize
+        def make_var(*ix, vartype, lower, upper):
+            name_i = '_'.join([name] + [str(i) for i in ix]) # like x_1_2_3
+            return Var(name_i, vartype, lower, upper)
+        return np.fromfunction(make_var, shape=shape, dtype=int, vartype=vartype, lower=lower, upper=upper)
+    def intvar_array(self, name: str, shape: tuple[int], lower: float = -np.inf, upper: float = np.inf):
+        '''Create a Numpy array of decision variables named after their positional indices.'''
+        return self._var_array(name=name, vartype=Var.INTEGER, lower=lower, upper=upper, shape=shape)
     def binvar_array(self, name: str, shape: tuple[int]):
         '''
         Create a Numpy array of binary decision variables named after their positional indices.
         Many problems end up creating a 2- or 3-D array of binary variables, hence this function.
         '''
-        @np.vectorize
-        def make_var(*ix):
-            name_i = '_'.join([name] + [str(i) for i in ix]) # like x_1_2_3
-            return self.binvar(name_i)
-        return np.fromfunction(make_var, shape=shape, dtype=int)
+        return self._var_array(name=name, vartype=Var.INTEGER, lower=0, upper=1, shape=shape)
     def constraint(self, lower: Expr, middle: Expr, upper: Expr = None):
         '''
         Establish new constraint(s) that lower <= middle, and middle <= upper if upper is provided.
@@ -271,6 +277,7 @@ class Problem:
     def sum(self, vs: list[Var], wts=None) -> Expr:
         '''
         Create an expression representing a (possibly weighted) sum of variables.
+        Python's sum() and numpy.sum() also work, and accept a mix of Var and constants.
         '''
         if wts is None:
             wts = [1]*len(vs)
