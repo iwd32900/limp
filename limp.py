@@ -145,8 +145,13 @@ class Problem:
     '''
     Mixed integer linear programming problem formulation
     '''
+    DEFAULT_EPS = 1e-6
+
     def __init__(self):
         self.constraints = []
+        # Constant binary variables for re-use in expressions that might need them
+        self.zero = self.intvar('_zero_', 0, 0)
+        self.one = self.intvar('_one_', 1, 1)
     def contvar(self, name: str, lower: Real = -np.inf, upper: Real = np.inf) -> Var:
         '''Create a real-valued variable.'''
         return Var(name=name, vartype=Var.CONTINUOUS, lower=lower, upper=upper)
@@ -231,7 +236,7 @@ class Problem:
             # Because the objective is just a dot product, we have to introduce a dummy variable
             # if we want to add/subtract a constant amount.
             # This doesn't change the solution, but it does make the reported loss match the user's expectation
-            objective = objective + self.eqvar('_intercept', as_expr(objective.const)) - objective.const
+            objective = objective - objective.const + objective.const*self.one
             assert objective.const == 0
         for v in objective.terms.keys():
             vs.setdefault(v, len(vs))
@@ -440,10 +445,10 @@ class Problem:
         x_upper = x.upper
         x_lower = x.lower
         if x_lower >= 0: # x is always non-negative
-            self.constraint(z, x)
+            self.equal(z, x)
             return z
         elif x_upper <= 0: # x is always non-positive
-            self.constraint(z, -x)
+            self.equal(z, -x)
             return z
         d = self.binvar(f'is_pos({x})')
         bigM = 2*max(abs(x_upper), abs(x_lower))
@@ -453,3 +458,58 @@ class Problem:
         self.constraint(z, x + bigM*(1-d))
         self.constraint(z, -x + bigM*d)
         return z
+    def disjoint_ranges2(self, x: Expr, l1: Real, u1: Real, l2: Real, u2: Real) -> Var:
+        '''
+        Constrains expression to lie in one of two disjoint ranges,
+        and returns a var that is 0 for the first range, 1 for the second range.
+        '''
+        assert l1 <= u1 and l2 <= u2, "lower bound is greater than upper bound"
+        assert u1 < l2 or u2 < l1, "ranges are overlapping"
+        self._check_finite([l1, u1, l2, u2])
+        d = self.binvar(f'disjoint_{len(self.constraints)}')
+        self.constraint(l1*(1-d) + l2*d, expr, u1*(1-d) + u2*d)
+        return d
+    def is_positive(self, x: Expr, eps: Real = None) -> Var:
+        '''
+        Returns a binary variable that is 1 iff expression is STRICTLY GREATER than zero.
+        As a side effect, may constrain expression not to lie in (0, eps).
+        By manipulating x, can be used for any inequality test.
+        '''
+        if eps is None:
+            eps = self.DEFAULT_EPS
+        assert eps > 0, "eps must be greater than zero"
+        lower = x.lower
+        upper = x.upper
+        if lower > 0:
+            return self.one
+        elif upper <= 0:
+            return self.zero
+        else:
+            return self.disjoint_ranges2(x, lower, 0, eps, upper)
+    def sign(self, x: Expr, eps: Real = None) -> Expr:
+        '''
+        Returns -1, 0, or +1 if the sign of x is negative, zero, or positive.
+        As a side effect, may constrain expression not to lie in (-eps, 0) and (0, eps).
+        '''
+        if eps is None:
+            eps = self.DEFAULT_EPS
+        assert eps > 0, "eps must be greater than zero"
+        lower = x.lower
+        upper = x.upper
+        self._check_finite([lower, upper])
+        if lower > 0:
+            return self.one
+        elif upper < 0:
+            return -1*self.one
+        elif -eps < lower <= upper < eps:
+            return self.zero
+        # Three-way disjoint ranges with 2 decision variables
+        is_pos = self.binvar(f'is_pos_{len(self.constraints)}')
+        is_neg = self.binvar(f'is_neg_{len(self.constraints)}')
+        self.at_most(1, [is_pos, is_neg])
+        # if is_pos: [eps, upper]
+        # if is_neg: [lower, -eps]
+        # if neither: [0, 0]
+        self.constraint(lower*is_neg + eps*is_pos, expr, -eps*is_neg + upper*is_pos)
+        return is_pos - is_neg
+            
